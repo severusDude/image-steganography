@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>DWT Steganography</title>
+		<style>
+			body {
+				font-family: Arial, sans-serif;
+				max-width: 800px;
+				margin: 0 auto;
+				padding: 20px;
+			}
+			.container {
+				display: flex;
+				flex-direction: column;
+				gap: 20px;
+			}
+			.image-container {
+				text-align: center;
+			}
+			img {
+				max-width: 100%;
+				max-height: 400px;
+				border: 1px solid #ddd;
+			}
+			textarea {
+				width: 100%;
+				height: 100px;
+				padding: 10px;
+				box-sizing: border-box;
+			}
+			.buttons {
+				display: flex;
+				gap: 10px;
+				margin-top: 10px;
+			}
+			button {
+				padding: 10px 15px;
+				background-color: #4caf50;
+				color: white;
+				border: none;
+				cursor: pointer;
+				border-radius: 4px;
+			}
+			button:hover {
+				background-color: #45a049;
+			}
+			#decodeBtn {
+				background-color: #2196f3;
+			}
+			#decodeBtn:hover {
+				background-color: #0b7dda;
+			}
+			input[type="file"] {
+				margin-bottom: 10px;
+			}
+			a {
+				text-decoration: none;
+				padding: 10px 15px;
+				background-color: #ff9800;
+				color: white;
+				border-radius: 4px;
+				display: inline-block;
+				margin-top: 10px;
+			}
+			a:hover {
+				background-color: #e68a00;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<h1>DWT Steganography</h1>
+
+			<div>
+				<input type="file" id="imageInput" accept="image/*" />
+				<div class="image-container">
+					<img
+						id="previewImage"
+						src="/api/placeholder/400/300"
+						alt="Preview Image"
+					/>
+				</div>
+			</div>
+
+			<div>
+				<h3>Message</h3>
+				<textarea
+					id="imageMessage"
+					placeholder="Enter your secret message here..."
+				></textarea>
+			</div>
+
+			<div class="buttons">
+				<button id="encodeBtn">Encode Message</button>
+				<button id="decodeBtn">Decode Message</button>
+				<a id="downloadLink" href="#" download="stego-image.png"
+					>Download Image</a
+				>
+			</div>
+
+			<div id="status"></div>
+		</div>
+
+		<script>
+			// DOM Elements
+			const imageInput = document.getElementById("imageInput");
+			const previewImage = document.getElementById("previewImage");
+			const imageMessage = document.getElementById("imageMessage");
+			const encodeBtn = document.getElementById("encodeBtn");
+			const decodeBtn = document.getElementById("decodeBtn");
+			const downloadLink = document.getElementById("downloadLink");
+			const statusElement = document.getElementById("status");
+
+			// Original image data
+			let originalImageData = null;
+
+			// Handle image upload
+			imageInput.addEventListener("change", function (e) {
+				const file = e.target.files[0];
+				if (file) {
+					const reader = new FileReader();
+					reader.onload = function (event) {
+						previewImage.src = event.target.result;
+						// Reset the message when a new image is loaded
+						imageMessage.value = "";
+						statusElement.textContent = "Image loaded successfully.";
+					};
+					reader.readAsDataURL(file);
+				}
+			});
+
+			// Haar DWT functions
+			function haarDWT(data, width, height) {
+				const result = new Float32Array(data.length);
+
+				// Perform horizontal transform
+				for (let y = 0; y < height; y++) {
+					for (let x = 0; x < width; x += 2) {
+						const i = y * width + x;
+						const avg = (data[i] + data[i + 1]) / 2;
+						const diff = (data[i] - data[i + 1]) / 2;
+						result[y * width + x / 2] = avg;
+						result[y * width + width / 2 + x / 2] = diff;
+					}
+				}
+
+				// Copy to data for vertical transform
+				for (let i = 0; i < data.length; i++) {
+					data[i] = result[i];
+				}
+
+				// Perform vertical transform
+				for (let x = 0; x < width; x++) {
+					for (let y = 0; y < height; y += 2) {
+						const i1 = y * width + x;
+						const i2 = (y + 1) * width + x;
+						const avg = (data[i1] + data[i2]) / 2;
+						const diff = (data[i1] - data[i2]) / 2;
+						result[(y / 2) * width + x] = avg;
+						result[(height / 2 + y / 2) * width + x] = diff;
+					}
+				}
+
+				return result;
+			}
+
+			function inverseHaarDWT(data, width, height) {
+				const result = new Float32Array(data.length);
+
+				// Perform vertical inverse transform
+				for (let x = 0; x < width; x++) {
+					for (let y = 0; y < height / 2; y++) {
+						const avg = data[y * width + x];
+						const diff = data[(height / 2 + y) * width + x];
+						result[2 * y * width + x] = avg + diff;
+						result[(2 * y + 1) * width + x] = avg - diff;
+					}
+				}
+
+				// Copy to data for horizontal inverse transform
+				for (let i = 0; i < data.length; i++) {
+					data[i] = result[i];
+				}
+
+				// Perform horizontal inverse transform
+				for (let y = 0; y < height; y++) {
+					for (let x = 0; x < width / 2; x++) {
+						const avg = data[y * width + x];
+						const diff = data[y * width + width / 2 + x];
+						result[y * width + 2 * x] = avg + diff;
+						result[y * width + 2 * x + 1] = avg - diff;
+					}
+				}
+
+				return result;
+			}
+
+			// Convert text to binary
+			function textToBinary(text) {
+				let binary = "";
+				for (let i = 0; i < text.length; i++) {
+					const charCode = text.charCodeAt(i);
+					const charBinary = charCode.toString(2).padStart(8, "0");
+					binary += charBinary;
+				}
+				return binary;
+			}
+
+			// Convert binary to text
+			function binaryToText(binary) {
+				let text = "";
+				for (let i = 0; i < binary.length; i += 8) {
+					const byte = binary.substr(i, 8);
+					const charCode = parseInt(byte, 2);
+					text += String.fromCharCode(charCode);
+				}
+				return text;
+			}
+
+			// Encode message in DWT coefficients
+			function encodeMessage(imageData, message) {
+				// Extract dimensions and channels
+				const width = imageData.width;
+				const height = imageData.height;
+				const channels = 4; // RGBA
+
+				// Convert message to binary
+				const binary = textToBinary(message);
+				const messageLength = binary.length;
+
+				// Check if the message can fit in the image
+				const availableCoefficients = (width * height) / 4; // Using the HH subband of the DWT
+				if (messageLength > availableCoefficients) {
+					throw new Error("Message is too large for this image");
+				}
+
+				// Prepare image data arrays for each channel
+				const redChannel = new Float32Array(width * height);
+				const greenChannel = new Float32Array(width * height);
+				const blueChannel = new Float32Array(width * height);
+
+				// Extract channels
+				for (let y = 0; y < height; y++) {
+					for (let x = 0; x < width; x++) {
+						const idx = (y * width + x) * 4;
+						redChannel[y * width + x] = imageData.data[idx];
+						greenChannel[y * width + x] = imageData.data[idx + 1];
+						blueChannel[y * width + x] = imageData.data[idx + 2];
+					}
+				}
+
+				// Apply DWT to each channel
+				const redDWT = haarDWT(redChannel.slice(), width, height);
+				const greenDWT = haarDWT(greenChannel.slice(), width, height);
+				const blueDWT = haarDWT(blueChannel.slice(), width, height);
+
+				// Store message length at the beginning of HH subband (bottom right quadrant)
+				const lengthBinary = messageLength.toString(2).padStart(32, "0");
+				for (let i = 0; i < 32; i++) {
+					const x = width / 2 + (i % (width / 4));
+					const y = height / 2 + Math.floor(i / (width / 4));
+					const idx = y * width + x;
+
+					// Embed in the least significant bit
+					redDWT[idx] = Math.floor(redDWT[idx]);
+					if (lengthBinary[i] === "1") {
+						redDWT[idx] |= 1;
+					} else {
+						redDWT[idx] &= ~1;
+					}
+				}
+
+				// Embed the message in the HH subband
+				for (let i = 0; i < messageLength; i++) {
+					// Calculate position in HH subband
+					const x = width / 2 + ((i + 32) % (width / 4));
+					const y = height / 2 + Math.floor((i + 32) / (width / 4));
+					const idx = y * width + x;
+
+					// Alternate embedding between channels for better distribution
+					const channelIdx = i % 3;
+					let dwtArray;
+
+					if (channelIdx === 0) {
+						dwtArray = redDWT;
+					} else if (channelIdx === 1) {
+						dwtArray = greenDWT;
+					} else {
+						dwtArray = blueDWT;
+					}
+
+					// Embed in the least significant bit
+					dwtArray[idx] = Math.floor(dwtArray[idx]);
+					if (binary[i] === "1") {
+						dwtArray[idx] |= 1;
+					} else {
+						dwtArray[idx] &= ~1;
+					}
+				}
+
+				// Apply inverse DWT
+				const redInverse = inverseHaarDWT(redDWT, width, height);
+				const greenInverse = inverseHaarDWT(greenDWT, width, height);
+				const blueInverse = inverseHaarDWT(blueDWT, width, height);
+
+				// Reconstruct the image
+				const newData = new Uint8ClampedArray(width * height * 4);
+				for (let y = 0; y < height; y++) {
+					for (let x = 0; x < width; x++) {
+						const idx = (y * width + x) * 4;
+						newData[idx] = Math.max(
+							0,
+							Math.min(255, Math.round(redInverse[y * width + x]))
+						);
+						newData[idx + 1] = Math.max(
+							0,
+							Math.min(255, Math.round(greenInverse[y * width + x]))
+						);
+						newData[idx + 2] = Math.max(
+							0,
+							Math.min(255, Math.round(blueInverse[y * width + x]))
+						);
+						newData[idx + 3] = imageData.data[idx + 3]; // Keep original alpha
+					}
+				}
+
+				return new ImageData(newData, width, height);
+			}
+
+			// Decode message from DWT coefficients
+			function decodeMessage(imageData) {
+				// Extract dimensions
+				const width = imageData.width;
+				const height = imageData.height;
+
+				// Prepare image data arrays for each channel
+				const redChannel = new Float32Array(width * height);
+				const greenChannel = new Float32Array(width * height);
+				const blueChannel = new Float32Array(width * height);
+
+				// Extract channels
+				for (let y = 0; y < height; y++) {
+					for (let x = 0; x < width; x++) {
+						const idx = (y * width + x) * 4;
+						redChannel[y * width + x] = imageData.data[idx];
+						greenChannel[y * width + x] = imageData.data[idx + 1];
+						blueChannel[y * width + x] = imageData.data[idx + 2];
+					}
+				}
+
+				// Apply DWT to each channel
+				const redDWT = haarDWT(redChannel.slice(), width, height);
+				const greenDWT = haarDWT(greenChannel.slice(), width, height);
+				const blueDWT = haarDWT(blueChannel.slice(), width, height);
+
+				// Extract message length from the beginning of HH subband
+				let lengthBinary = "";
+				for (let i = 0; i < 32; i++) {
+					const x = width / 2 + (i % (width / 4));
+					const y = height / 2 + Math.floor(i / (width / 4));
+					const idx = y * width + x;
+
+					// Extract the least significant bit
+					lengthBinary += redDWT[idx] & 1 ? "1" : "0";
+				}
+				const messageLength = parseInt(lengthBinary, 2);
+
+				// Extract the message
+				let binary = "";
+				for (let i = 0; i < messageLength; i++) {
+					// Calculate position in HH subband
+					const x = width / 2 + ((i + 32) % (width / 4));
+					const y = height / 2 + Math.floor((i + 32) / (width / 4));
+					const idx = y * width + x;
+
+					// Alternate between channels based on the bit position
+					const channelIdx = i % 3;
+					let dwtArray;
+
+					if (channelIdx === 0) {
+						dwtArray = redDWT;
+					} else if (channelIdx === 1) {
+						dwtArray = greenDWT;
+					} else {
+						dwtArray = blueDWT;
+					}
+
+					// Extract the least significant bit
+					binary += dwtArray[idx] & 1 ? "1" : "0";
+				}
+
+				return binaryToText(binary);
+			}
+
+			// Function to handle image processing
+			function processImage(action) {
+				const canvas = document.createElement("canvas");
+				const ctx = canvas.getContext("2d");
+
+				// Set canvas dimensions to match the image
+				canvas.width = previewImage.naturalWidth;
+				canvas.height = previewImage.naturalHeight;
+
+				// Draw the image on the canvas
+				ctx.drawImage(previewImage, 0, 0);
+
+				// Get the image data
+				const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+				if (action === "encode") {
+					try {
+						// Get the message
+						const message = imageMessage.value;
+						if (!message) {
+							statusElement.textContent = "Please enter a message to encode.";
+							return;
+						}
+
+						// Store original image data for potential later use
+						originalImageData = imageData;
+
+						// Encode the message
+						const encodedImageData = encodeMessage(imageData, message);
+
+						// Put the encoded image data back to the canvas
+						ctx.putImageData(encodedImageData, 0, 0);
+
+						// Update the preview image
+						previewImage.src = canvas.toDataURL("image/png");
+
+						// Update the download link
+						downloadLink.href = canvas.toDataURL("image/png");
+
+						statusElement.textContent = "Message encoded successfully.";
+					} catch (error) {
+						statusElement.textContent = `Error encoding message: ${error.message}`;
+					}
+				} else if (action === "decode") {
+					try {
+						// Decode the message
+						const decodedMessage = decodeMessage(imageData);
+
+						// Update the message textarea
+						imageMessage.value = decodedMessage;
+
+						statusElement.textContent =
+							"Message decoded successfully." + decodedMessage;
+					} catch (error) {
+						statusElement.textContent = `Error decoding message: ${error.message}`;
+					}
+				}
+			}
+
+			// Add event listeners
+			encodeBtn.addEventListener("click", () => processImage("encode"));
+			decodeBtn.addEventListener("click", () => processImage("decode"));
+
+			// Initialize
+			downloadLink.style.display = "none"; // Hide download link initially
+
+			// Show download link after encoding
+			encodeBtn.addEventListener("click", () => {
+				downloadLink.style.display = "inline-block";
+			});
+		</script>
+	</body>
+</html>
